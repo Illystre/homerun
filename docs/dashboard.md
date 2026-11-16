@@ -91,9 +91,12 @@ with a Refresh button. It needs read access to Services.
   it is: rootless Docker's network proxy (`slirp4netns`, `pasta`), for one,
   carries every container's traffic and can be the busiest thing on the host.
   **Rest outside containers** is what's left: the kernel and every smaller
-  process. The worker reads the processes from a short-lived Alpine helper in
-  the host's PID namespace, since it runs in a container of its own; when that
-  fails, the whole remainder is one **Outside containers** row.
+  process. A container Docker couldn't report on in time (one crash looping, or
+  just started, or on a host too busy to answer) is still named after its
+  service from its processes, rather than counted outside containers. The worker
+  reads the processes from a short-lived Alpine helper in the host's PID
+  namespace, since it runs in a container of its own; when that fails, the whole
+  remainder is one **Outside containers** row.
 - **Disk** lists Docker's volumes one by one, its images (layers they share
   counted once), the build cache no other cache shares, each container's own
   writable layer, and **Everything else** on the disk: the system, logs, files

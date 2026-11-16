@@ -354,3 +354,47 @@ func TestTaskFailure(t *testing.T) {
 		t.Error("the newest failure wins a tie")
 	}
 }
+
+func TestRolloutTask(t *testing.T) {
+	since := time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC)
+	old := swarmTask("shutdown", "failed", "task: non-zero exit (1)", "2026-11-16T09:59:00Z")
+	old.ID, old.CreatedAt = "oldtask000000000000000000", "2026-11-16T09:58:00Z"
+	exited := swarmTask("shutdown", "complete", "", "2026-11-16T10:02:00Z")
+	exited.ID, exited.CreatedAt = "2dop8v771zjtokvk4yzb9hsxp", "2026-11-16T10:01:00Z"
+	starting := swarmTask("running", "starting", "", "2026-11-16T10:03:00Z")
+	starting.ID, starting.CreatedAt = "newesttask000000000000000", "2026-11-16T10:03:00Z"
+	tasks := []dockerapi.SwarmTask{old, exited, starting}
+
+	if task, ok := deploy.RolloutTask(tasks, "update paused due to failure or early termination of task 2dop8v771zjtokvk4yzb9hsxp", since); !ok || task.ID != exited.ID {
+		t.Errorf("the task swarm's message names wins, got %+v", task)
+	}
+	if task, ok := deploy.RolloutTask(tasks, "", since); !ok || task.ID != starting.ID {
+		t.Errorf("a failure from before the update is ignored, the newest task since then is taken, got %+v", task)
+	}
+	if _, ok := deploy.RolloutTask([]dockerapi.SwarmTask{old}, "", since); ok {
+		t.Error("no task from this update means nothing to explain")
+	}
+}
+
+func TestTaskSummary(t *testing.T) {
+	exited := swarmTask("shutdown", "complete", "", "")
+	exited.ID = "2dop8v771zjtokvk4yzb9hsxp"
+	exited.Status.ContainerStatus = &struct {
+		ContainerID string `json:"ContainerID"`
+		ExitCode    int    `json:"ExitCode"`
+	}{ContainerID: "abc", ExitCode: 0}
+	if got := deploy.TaskSummary(exited); got != "task 2dop8v771zjt complete with exit code 0: it exited cleanly, but a service's process has to keep running" {
+		t.Errorf("exited: %q", got)
+	}
+	unhealthy := swarmTask("shutdown", "failed", "unhealthy container", "")
+	unhealthy.ID = "abcdefabcdefabcdef"
+	if got := deploy.TaskSummary(unhealthy); got != "task abcdefabcdef failed: unhealthy container" {
+		t.Errorf("unhealthy: %q", got)
+	}
+	running := swarmTask("running", "running", "", "")
+	running.ID = "runningtask1"
+	running.Status.ContainerStatus = exited.Status.ContainerStatus
+	if got := deploy.TaskSummary(running); got != "task runningtask1 running" {
+		t.Errorf("running: %q", got)
+	}
+}

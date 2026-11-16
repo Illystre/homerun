@@ -18,12 +18,17 @@ complete, with the raw build/pull output streaming underneath. Progress arrives
 over server-sent events (the server pushes each new line and status change; if
 that stream can't be held open, the panel falls back to polling), and it resumes
 correctly if you reload the page mid-deploy, or if the deploy was started
-somewhere else entirely (a template quick-deploy, cron). The Overview tab itself
-opens on four figures for the period picked on its chart (today by default, up
-to all time): requests, average response time, error rate, and uptime (public
-checks first, network checks otherwise; average CPU when the service has no
-uptime checks), each with its change against the period before. Below them sit a
-chart of requests, latency, CPU or memory over that period, a **Details** card
+somewhere else entirely (a template quick-deploy, cron, a git push, a settings
+change such as turning on the login wall): the service's page checks for a new
+deploy every few seconds and opens the panel on its own. On a swarm service, the
+log names every new task as it changes state, and a rollout that fails or times
+out ends with the task that explains it: its state and exit code, its
+healthcheck's last answer, and its last output. The Overview tab itself opens on
+four figures for the period picked on its chart (today by default, up to all
+time): requests, average response time, error rate, and uptime (public checks
+first, network checks otherwise; average CPU when the service has no uptime
+checks), each with its change against the period before. Below them sit a chart
+of requests, latency, CPU or memory over that period, a **Details** card
 (replicas, current CPU and memory, limits, port, health check, volumes, age), an
 **Activity** card, its latest **Revisions** (each opening its revision), the
 last few lines of its live logs, and a **Connections** card listing the services

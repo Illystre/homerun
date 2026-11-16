@@ -22,6 +22,10 @@ When done delete the entry, no bloat.
       gain a lazy connect, or if the suite learns to deploy a template next to
       its app.
 
+- [ ] A swarm rollout's new tasks aren't in the stored service logs while the
+      deploy waits on them: a failed rollout left no lines from its tasks for
+      its whole 15 minutes, and the crash-looping tasks swarm kept afterwards
+      were stored under the previous revision's deployment id.
 - [ ] Resource incidents have no REST API, MCP tool or CLI command yet: only
       Monitoring → Incidents reads them.
 - [ ] A remote host connected as a raw Docker daemon (`tcp://`, `ssh://`) isn't

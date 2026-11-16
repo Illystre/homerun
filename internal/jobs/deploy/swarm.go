@@ -183,6 +183,7 @@ func (r *run) rollOutSwarm(ctx context.Context, id string, spec map[string]any, 
 		"Parallelism":     1,
 	}
 	previousStartedAt := ""
+	updateStarted := time.Now().Add(-5 * time.Second)
 	if inspected.UpdateStatus != nil {
 		previousStartedAt = inspected.UpdateStatus.StartedAt
 	}
@@ -197,7 +198,7 @@ func (r *run) rollOutSwarm(ctx context.Context, id string, spec map[string]any, 
 	}
 	r.progress.line(PhaseHealth)
 	if err := tracing.Stage(ctx, "wait for the rollout", func(ctx context.Context) error {
-		return r.awaitSwarmUpdate(ctx, id, previousStartedAt)
+		return r.awaitSwarmUpdate(ctx, id, previousStartedAt, updateStarted)
 	}, attribute.String("homerun.swarm.service_id", id)); err != nil {
 		return "", err
 	}
@@ -206,13 +207,16 @@ func (r *run) rollOutSwarm(ctx context.Context, id string, spec map[string]any, 
 }
 
 // awaitSwarmUpdate polls the swarm service update until it completes, fails,
-// or outlives swarmUpdateMaxWait.
-func (r *run) awaitSwarmUpdate(ctx context.Context, id, previousStartedAt string) error {
+// or outlives swarmUpdateMaxWait, writing every change of state of the tasks
+// it started to the deploy log. When it fails or times out, the task that
+// explains it is reported with its healthcheck answer and last output.
+func (r *run) awaitSwarmUpdate(ctx context.Context, id, previousStartedAt string, since time.Time) error {
 	started := time.Now()
+	seen := map[string]string{}
 	for {
 		if time.Since(started) > swarmUpdateMaxWait {
-			return &kindError{kind: FailureRolloutFailed, err: fmt.Errorf(
-				"Swarm didn't finish updating the service within %d minutes.", int(swarmUpdateMaxWait.Minutes()))}
+			reason := fmt.Sprintf("Swarm didn't finish updating the service within %d minutes.", int(swarmUpdateMaxWait.Minutes()))
+			return &kindError{kind: FailureRolloutFailed, err: errors.New(r.explainRollout(ctx, id, reason, "", since))}
 		}
 		select {
 		case <-ctx.Done():
@@ -223,18 +227,49 @@ func (r *run) awaitSwarmUpdate(ctx context.Context, id, previousStartedAt string
 		if err != nil {
 			return err
 		}
+		if tasks, err := r.docker.ListSwarmTasks(ctx, id, false); err == nil {
+			r.reportTaskChanges(tasks, since, seen)
+		}
 		switch outcome := SwarmUpdateOutcome(inspected, previousStartedAt); outcome.State {
 		case "completed":
 			return nil
 		case "failed":
-			reason := outcome.Reason
-			if tasks, err := r.docker.ListSwarmTasks(ctx, id, false); err == nil {
-				if task, ok := LatestFailedTask(tasks); ok {
-					r.reportTaskOutput(ctx, task)
-					reason = strings.TrimSuffix(reason, ".") + ". Last task error: " + TaskFailure(task)
-				}
+			message := ""
+			if inspected.UpdateStatus != nil {
+				message = inspected.UpdateStatus.Message
 			}
-			return &kindError{kind: FailureRolloutFailed, err: errors.New(reason)}
+			return &kindError{kind: FailureRolloutFailed, err: errors.New(r.explainRollout(ctx, id, outcome.Reason, message, since))}
 		}
 	}
+}
+
+// reportTaskChanges writes a line for every task created since the update
+// began whose state or error changed since the last poll.
+func (r *run) reportTaskChanges(tasks []dockerapi.SwarmTask, since time.Time, seen map[string]string) {
+	for _, task := range tasks {
+		if at, err := time.Parse(time.RFC3339Nano, task.CreatedAt); err != nil || at.Before(since) {
+			continue
+		}
+		summary := TaskSummary(task)
+		if seen[task.ID] == summary {
+			continue
+		}
+		seen[task.ID] = summary
+		r.progress.line("New " + summary + ".")
+	}
+}
+
+// explainRollout reports the task behind a failed rollout and returns reason
+// with that task's summary appended, or reason alone when no task explains it.
+func (r *run) explainRollout(ctx context.Context, id, reason, message string, since time.Time) string {
+	tasks, err := r.docker.ListSwarmTasks(ctx, id, false)
+	if err != nil {
+		return reason
+	}
+	task, ok := RolloutTask(tasks, message, since)
+	if !ok {
+		return reason
+	}
+	r.reportTaskOutput(ctx, task)
+	return strings.TrimSuffix(reason, ".") + ". Last " + TaskSummary(task) + "."
 }

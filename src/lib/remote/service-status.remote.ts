@@ -41,3 +41,17 @@ export const syncServiceStatuses = query(
 		);
 	},
 );
+
+/**
+ * A service's latest deploy attempt, polled by its page so a deploy queued
+ * anywhere else (a settings change, a git push, another tab, cron) shows its
+ * progress without a reload. Null when it was never deployed.
+ */
+export const latestDeployment = query(
+	z.string(),
+	async (serviceId): Promise<{ id: string; status: string } | null> => {
+		requirePermission("services", "read");
+		const [latest] = await DeploymentDTO.listForService(serviceId, 1);
+		return latest ? { id: latest.id, status: latest.toJSON().status } : null;
+	},
+);

@@ -16,7 +16,7 @@
 		Terminal,
 	} from "@lucide/svelte";
 	import * as Select from "@zedensix/ui/select";
-	import { onDestroy, onMount } from "svelte";
+	import { onDestroy, onMount, untrack } from "svelte";
 
 	import CopyButton from "#lib/components/copy-button.svelte";
 	import StatusBadge from "#lib/components/status-badge.svelte";
@@ -27,7 +27,10 @@
 		provideDeployProgress,
 	} from "#lib/deploy-progress.svelte.js";
 	import { timeAgo } from "#lib/formatting.js";
-	import { syncServiceStatuses } from "#lib/remote/service-status.remote.js";
+	import {
+		latestDeployment,
+		syncServiceStatuses,
+	} from "#lib/remote/service-status.remote.js";
 	import { primaryHostname } from "#lib/service-domains.js";
 	import { hasIconImage } from "#lib/service-icon.js";
 	import { internalUrl, maskUrlPassword } from "#lib/service-link.js";
@@ -47,9 +50,30 @@
 		}),
 	);
 
-	onMount(() =>
-		progress.resume(data.lastDeployment ?? undefined, svc.currentStatus),
-	);
+	const DEPLOY_POLL_MS = 4000;
+
+	const polledDeployment = $derived(latestDeployment(svc.id));
+
+	$effect(() => {
+		const latest = data.lastDeployment ?? undefined;
+		const status = svc.currentStatus;
+		untrack(() => progress.follow(latest, status));
+	});
+
+	$effect(() => {
+		const latest = polledDeployment.current ?? undefined;
+		const status = svc.currentStatus;
+		untrack(() => progress.follow(latest, status));
+	});
+
+	onMount(() => {
+		const timer = setInterval(() => {
+			if (!document.hidden && progress.pendingAction === null) {
+				void polledDeployment.refresh();
+			}
+		}, DEPLOY_POLL_MS);
+		return () => clearInterval(timer);
+	});
 
 	onDestroy(() => progress.close());
 

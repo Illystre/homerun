@@ -108,16 +108,20 @@ func ParseProcesses(output string) []Process {
 	return processes
 }
 
-// cpuLineTotal sums every counter on /proc/stat's aggregate cpu line, in clock
-// ticks across every core.
+// cpuLineTotal sums user, nice, system, idle and irq on /proc/stat's aggregate
+// cpu line, in clock ticks across every core: the five counters the host's own
+// CPU% is measured against, so a process's share is on the same scale.
 func cpuLineTotal(section string) (uint64, bool) {
 	fields := strings.Fields(section)
 	if len(fields) < 5 || fields[0] != "cpu" {
 		return 0, false
 	}
 	var total uint64
-	for _, field := range fields[1:] {
-		value, err := strconv.ParseUint(field, 10, 64)
+	for _, index := range []int{1, 2, 3, 4, 6} {
+		if index >= len(fields) {
+			break
+		}
+		value, err := strconv.ParseUint(fields[index], 10, 64)
 		if err != nil {
 			return 0, false
 		}

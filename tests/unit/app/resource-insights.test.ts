@@ -128,7 +128,7 @@ describe("ResourceInsightsService", () => {
 				container: true,
 				count: 4,
 				cpuPercent: 50,
-				group: "abcdefabcdef",
+				group: "a",
 				memUsedMb: 900,
 				name: "nginx",
 			},
@@ -165,6 +165,51 @@ describe("ResourceInsightsService", () => {
 		).toEqual([
 			["Rest outside containers", "1.3 GB"],
 			["slirp4netns", "1.2 GB"],
+		]);
+	});
+
+	test("a container the stats sweep missed is named from the process reading, not left in the rest", async () => {
+		stubHost();
+		stubWorker({}, [
+			{
+				container: true,
+				containerImage: "homerun-build-app:2",
+				containerName: "app.1.xyz",
+				count: 2,
+				cpuPercent: 6,
+				group: "ffffffffffff",
+				labels: { "homerun.service.id": "svc-1" },
+				memUsedMb: 400,
+				name: "bun",
+			},
+			{
+				container: true,
+				count: 1,
+				cpuPercent: 2,
+				group: "eeeeeeeeeeee",
+				memUsedMb: 80,
+				name: "sh",
+			},
+		]);
+		const cpu = await ResourceInsightsService.insight("cpu");
+		expect(
+			cpu.consumers
+				.filter(
+					(c) => c.label !== "Workstation box" && c.kind !== "workstation",
+				)
+				.map((c) => [c.label, c.kind, c.amount, c.detail]),
+		).toEqual([
+			["web", "service", "60%, 2.4 cores", "nginx"],
+			["web", "service", "6.0%", "homerun-build-app:2"],
+			["Cron job nightly", "cron job", "5.0%, 0.2 cores", "alpine"],
+			[
+				"Outside containers",
+				"other",
+				"5.0%",
+				"The system and anything this host runs outside Docker, measured as what the containers don't account for",
+			],
+			["homerun-build-x", "helper", "2.0%, 0.1 cores", "docker:cli"],
+			["Container eeeeeeeeeeee", "container", "2.0%", ""],
 		]);
 	});
 

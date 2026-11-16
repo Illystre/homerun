@@ -289,8 +289,11 @@ deep-linking into `/settings`.
   handles by catching and telling the user to copy manually. Both are
   status-driven (they end once the deployment reaches a terminal status), which
   is also what makes resuming the progress view after a mid-deploy page reload
-  work, `onMount` checks the latest deployment's status and `svc.currentStatus`
-  and reattaches if either is still in-flight.
+  work: `DeployProgress.follow` takes the latest deployment from the layout's
+  data and from `latestDeployment` (polled every 4 s while the tab is visible
+  and no deploy is being watched) and reattaches when a new one is in flight, so
+  a deploy queued by a settings save, a git push or another tab shows up without
+  a reload.
 
 `src/routes/(protected)/stacks/`, `templates/`, `storage/`, `authentication/`
 mirror this pattern (list + `new/` create route + `[id]` detail where

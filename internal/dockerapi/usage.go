@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"sync"
+
+	"github.com/moby/moby/api/types/container"
 )
 
 // ContainerUsage is one running container's share of the host right now, for
@@ -47,16 +49,8 @@ func (c *Client) ContainersUsage(ctx context.Context) ([]ContainerUsage, error) 
 			if err != nil {
 				return
 			}
-			labels := map[string]string{}
-			for key, value := range entry.Labels {
-				if strings.HasPrefix(key, "homerun.") || strings.HasPrefix(key, "com.docker.swarm.service.name") {
-					labels[key] = value
-				}
-			}
-			name := entry.ID[:min(12, len(entry.ID))]
-			if len(entry.Names) > 0 {
-				name = strings.TrimPrefix(entry.Names[0], "/")
-			}
+			labels := homerunLabels(entry.Labels)
+			name := containerName(entry)
 			results[index] = &ContainerUsage{
 				CPUPercent:     sample.CPUPercent,
 				HostCPUPercent: sample.CPUPercent / float64(max(1, sample.Cores)),
@@ -76,4 +70,24 @@ func (c *Client) ContainersUsage(ctx context.Context) ([]ContainerUsage, error) 
 		}
 	}
 	return usage, nil
+}
+
+// homerunLabels keeps the labels the app names a container by: the homerun.*
+// ones and the swarm service's name.
+func homerunLabels(all map[string]string) map[string]string {
+	labels := map[string]string{}
+	for key, value := range all {
+		if strings.HasPrefix(key, "homerun.") || strings.HasPrefix(key, "com.docker.swarm.service.name") {
+			labels[key] = value
+		}
+	}
+	return labels
+}
+
+// containerName is a listed container's name, or its short id when it has none.
+func containerName(entry container.Summary) string {
+	if len(entry.Names) > 0 {
+		return strings.TrimPrefix(entry.Names[0], "/")
+	}
+	return entry.ID[:min(12, len(entry.ID))]
 }

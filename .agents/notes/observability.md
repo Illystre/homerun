@@ -554,7 +554,15 @@ is itself a container, so its `/proc` lists only its own processes;
 reads a second apart, `VmRSS`, `cgroup`) in an Alpine helper with
 `PidMode: host`, and `hoststats.ParseProcesses` groups by name and cgroup unit,
 flagging any process whose cgroup path holds a 64-hex id as a container's (works
-for the systemd and cgroupfs drivers and under rootless nesting).
+for the systemd and cgroupfs drivers and under rootless nesting). The worker
+tags each container's processes with that container's name, image and
+`homerun.*` labels from a listing that includes stopped containers, and
+`ResourceInsightsService` gives every container the stats sweep didn't measure
+(its stats call timed out under load, it had just started, or it was crash
+looping) its own row named after its service from those labels: before that, a
+crash-looping swarm task's CPU landed in "Rest outside containers". The process
+sample's CPU total sums the same five `/proc/stat` counters as the host's CPU%
+(user, nice, system, idle, irq), so both are on one scale.
 `ResourceInsightsService` splits "Outside containers" into the non-container
 groups past 0.5% plus a "Rest outside containers" row, falling back to the one
 row when the helper fails; concurrent reads (an alert's CPU and memory causes)

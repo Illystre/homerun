@@ -188,6 +188,9 @@ func TestBackupAndRestoreRoundTripOnRealDocker(t *testing.T) {
 	job, lines, _ := jobs.Recorder("backup", spec)
 	job.DockerSocket = socket
 	first, err := backup.Run(ctx, job)
+	if err != nil && strings.Contains(err.Error(), "does not support image mounts") {
+		t.Skipf("this Docker daemon can't mount an image into a container: %v", err)
+	}
 	if err != nil {
 		t.Fatalf("%v, log %v", err, lines())
 	}

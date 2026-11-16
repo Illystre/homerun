@@ -69,13 +69,23 @@ interface ContainerUsage {
 /** Every process on a host sharing a name and a cgroup unit, summed, as a worker reads them. */
 export interface HostProcess {
 	container: boolean;
+	/** For processes in a container, that container's image, name and homerun labels. */
+	containerImage?: string;
+	containerName?: string;
 	count: number;
 	/** Their share of every core together, the host's own CPU% scale. */
 	cpuPercent: number;
 	/** The cgroup unit they run in (`docker.service`), or a container's short id. */
 	group: string;
+	labels?: Record<string, string>;
 	memUsedMb: number;
 	name: string;
+}
+
+/** How a resource is measured on a process, and how a share of it reads. */
+interface Measure {
+	amount: (share: number) => string;
+	share: (process: HostProcess) => number;
 }
 
 interface DiskUsageResponse {
@@ -264,10 +274,7 @@ class ResourceInsightsServiceClass {
 	#outside(
 		outside: number,
 		processes: HostProcess[] | null,
-		measure: {
-			amount: (share: number) => string;
-			share: (process: HostProcess) => number;
-		},
+		measure: Measure,
 		whole: ResourceConsumer,
 	): ResourceConsumer[] {
 		const { amount, share } = measure;
@@ -316,9 +323,52 @@ class ResourceInsightsServiceClass {
 		};
 	}
 
+	/**
+	 * Containers the host's process reading saw but the container sampling
+	 * didn't measure (its stats timed out, it had only just started, or it
+	 * stopped in between), each with its processes summed, so a container
+	 * never hides in what's left outside containers.
+	 */
+	#unsampled(
+		sampled: ContainerUsage[],
+		{ owners, processes, viewerId }: Readers,
+		measure: Measure,
+	): ResourceConsumer[] {
+		const measured = new Set(
+			sampled.map((container) => container.id.slice(0, 12)),
+		);
+		const groups = new Map<string, { process: HostProcess; share: number }>();
+		for (const process of processes ?? []) {
+			if (!process.container || measured.has(process.group)) {
+				continue;
+			}
+			const entry = groups.get(process.group);
+			if (entry) {
+				entry.share += measure.share(process);
+			} else {
+				groups.set(process.group, { process, share: measure.share(process) });
+			}
+		}
+		return [...groups.values()]
+			.filter((entry) => entry.share >= PROCESS_SHARE)
+			.map(({ process, share }) => ({
+				...this.#describe(
+					{
+						image: process.containerImage ?? "",
+						labels: process.labels ?? {},
+						name: process.containerName ?? `Container ${process.group}`,
+					},
+					owners,
+					viewerId,
+				),
+				amount: measure.amount(share),
+				share,
+			}));
+	}
+
 	/** A container named after what it runs for. */
 	#describe(
-		container: ContainerUsage,
+		container: Pick<ContainerUsage, "image" | "labels" | "name">,
 		owners: Owners,
 		viewerId: string | null,
 	): Pick<ResourceConsumer, "detail" | "kind" | "label" | "link"> {
@@ -366,36 +416,33 @@ class ResourceInsightsServiceClass {
 	#cpu(
 		host: SystemStats,
 		usage: ContainerUsage[],
-		{ owners, processes, viewerId }: Readers,
+		readers: Readers,
 	): ResourceInsight {
-		const consumers: ResourceConsumer[] = usage
-			.filter((container) => container.hostCpuPercent > 0)
-			.map((container) => ({
-				...this.#describe(container, owners, viewerId),
-				amount: `${round(container.hostCpuPercent)}%, ${round(container.cpuPercent / 100)} cores`,
-				share: container.hostCpuPercent,
-			}));
+		const { owners, processes, viewerId } = readers;
+		const sampled = usage.filter((container) => container.hostCpuPercent > 0);
+		const consumers: ResourceConsumer[] = sampled.map((container) => ({
+			...this.#describe(container, owners, viewerId),
+			amount: `${round(container.hostCpuPercent)}%, ${round(container.cpuPercent / 100)} cores`,
+			share: container.hostCpuPercent,
+		}));
+		const measure: Measure = {
+			amount: (share) => `${round(share)}%`,
+			share: (process) => process.cpuPercent,
+		};
+		consumers.push(...this.#unsampled(sampled, readers, measure));
 		const outside =
 			host.cpuPercent -
-			usage.reduce((sum, container) => sum + container.hostCpuPercent, 0);
+			consumers.reduce((sum, consumer) => sum + consumer.share, 0);
 		consumers.push(
-			...this.#outside(
-				outside,
-				processes,
-				{
-					amount: (share) => `${round(share)}%`,
-					share: (process) => process.cpuPercent,
-				},
-				{
-					amount: `${round(outside)}%`,
-					detail:
-						"The system and anything this host runs outside Docker, measured as what the containers don't account for",
-					kind: "other",
-					label: "Outside containers",
-					link: null,
-					share: outside,
-				},
-			),
+			...this.#outside(outside, processes, measure, {
+				amount: `${round(outside)}%`,
+				detail:
+					"The system and anything this host runs outside Docker, measured as what the containers don't account for",
+				kind: "other",
+				label: "Outside containers",
+				link: null,
+				share: outside,
+			}),
 		);
 		return {
 			consumers: consumers.toSorted((a, b) => b.share - a.share),
@@ -408,37 +455,35 @@ class ResourceInsightsServiceClass {
 	#memory(
 		host: SystemStats,
 		usage: ContainerUsage[],
-		{ owners, processes, viewerId }: Readers,
+		readers: Readers,
 	): ResourceInsight {
+		const { owners, processes, viewerId } = readers;
 		const total = host.memTotalMb || 1;
-		const consumers: ResourceConsumer[] = usage
-			.filter((container) => container.memUsedMb > 0)
-			.map((container) => ({
-				...this.#describe(container, owners, viewerId),
-				amount: formatBytes(container.memUsedMb * MB),
-				share: (container.memUsedMb / total) * 100,
-			}));
+		const sampled = usage.filter((container) => container.memUsedMb > 0);
+		const consumers: ResourceConsumer[] = sampled.map((container) => ({
+			...this.#describe(container, owners, viewerId),
+			amount: formatBytes(container.memUsedMb * MB),
+			share: (container.memUsedMb / total) * 100,
+		}));
+		const measure: Measure = {
+			amount: (share) => formatBytes((share / 100) * total * MB),
+			share: (process) => (process.memUsedMb / total) * 100,
+		};
+		consumers.push(...this.#unsampled(sampled, readers, measure));
 		const outsideMb =
 			host.memUsedMb -
-			usage.reduce((sum, container) => sum + container.memUsedMb, 0);
+			(consumers.reduce((sum, consumer) => sum + consumer.share, 0) / 100) *
+				total;
 		consumers.push(
-			...this.#outside(
-				(outsideMb / total) * 100,
-				processes,
-				{
-					amount: (share) => formatBytes((share / 100) * total * MB),
-					share: (process) => (process.memUsedMb / total) * 100,
-				},
-				{
-					amount: formatBytes(outsideMb * MB),
-					detail:
-						"The system, its caches the kernel can't drop, and anything outside Docker",
-					kind: "other",
-					label: "Outside containers",
-					link: null,
-					share: (outsideMb / total) * 100,
-				},
-			),
+			...this.#outside((outsideMb / total) * 100, processes, measure, {
+				amount: formatBytes(outsideMb * MB),
+				detail:
+					"The system, its caches the kernel can't drop, and anything outside Docker",
+				kind: "other",
+				label: "Outside containers",
+				link: null,
+				share: (outsideMb / total) * 100,
+			}),
 		);
 		return {
 			consumers: consumers.toSorted((a, b) => b.share - a.share),

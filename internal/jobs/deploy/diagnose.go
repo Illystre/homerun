@@ -157,20 +157,77 @@ func (r *run) reportOutput(header, output string) {
 	}
 }
 
-// reportTaskOutput writes the last output of a failed swarm task to the
-// deploy log. A task rejected before its container started has none, so it
-// writes nothing.
+// RolloutTask is the task that explains a failed rollout: the one swarm's
+// update message names, else the latest one created since the update began
+// that reported an error, else the newest one created since then.
+func RolloutTask(tasks []dockerapi.SwarmTask, message string, since time.Time) (dockerapi.SwarmTask, bool) {
+	for _, task := range tasks {
+		if task.ID != "" && strings.Contains(message, task.ID) {
+			return task, true
+		}
+	}
+	recent := make([]dockerapi.SwarmTask, 0, len(tasks))
+	for _, task := range tasks {
+		if at, err := time.Parse(time.RFC3339Nano, task.CreatedAt); err == nil && !at.Before(since) {
+			recent = append(recent, task)
+		}
+	}
+	if task, ok := LatestFailedTask(recent); ok {
+		return task, true
+	}
+	var newest dockerapi.SwarmTask
+	var newestAt time.Time
+	found := false
+	for _, task := range recent {
+		at, _ := time.Parse(time.RFC3339Nano, task.CreatedAt)
+		if !found || at.After(newestAt) {
+			newest, newestAt, found = task, at, true
+		}
+	}
+	return newest, found
+}
+
+// TaskSummary is a swarm task in a few words: its short id, state, and either
+// its error or, once its container stopped, the exit code and what it means.
+func TaskSummary(task dockerapi.SwarmTask) string {
+	summary := fmt.Sprintf("task %s %s", shortTaskID(task.ID), task.Status.State)
+	if task.Status.Err != "" {
+		return summary + ": " + TaskFailure(task)
+	}
+	status := task.Status.ContainerStatus
+	switch task.Status.State {
+	case "new", "pending", "assigned", "accepted", "ready", "preparing", "starting", "running":
+		return summary
+	}
+	if status == nil || status.ContainerID == "" {
+		return summary
+	}
+	summary += fmt.Sprintf(" with exit code %d", status.ExitCode)
+	if hint := ExitCodeHint(status.ExitCode, false); hint != "" {
+		summary += ": " + hint
+	}
+	return summary
+}
+
+// reportTaskOutput writes what a swarm task left behind to the deploy log: its
+// last healthcheck answer when its container is on this host, then its last
+// output. A task rejected before its container started has neither.
 func (r *run) reportTaskOutput(ctx context.Context, task dockerapi.SwarmTask) {
-	if task.Status.ContainerStatus == nil || task.Status.ContainerStatus.ContainerID == "" {
+	status := task.Status.ContainerStatus
+	if status == nil || status.ContainerID == "" {
 		return
+	}
+	if info, err := r.docker.InspectContainer(ctx, status.ContainerID); err == nil && info.State.Health != nil {
+		if logs := info.State.Health.Log; len(logs) > 0 {
+			r.reportOutput(fmt.Sprintf("Its healthcheck (%s) last answered:", info.State.Health.Status), logs[len(logs)-1].Output)
+		}
 	}
 	output, err := r.docker.SwarmTaskLogsTail(ctx, task.ID, FailedOutputTail)
 	if err != nil {
-		r.progress.line(fmt.Sprintf("Couldn't read the failed task's output: %s", err))
+		r.progress.line(fmt.Sprintf("Couldn't read the task's output: %s", err))
 		return
 	}
-	r.progress.line(fmt.Sprintf("Failed task %s exited with code %d.", shortTaskID(task.ID), task.Status.ContainerStatus.ExitCode))
-	r.reportOutput("Its last output:", output)
+	r.reportOutput(fmt.Sprintf("Task %s's last output:", shortTaskID(task.ID)), output)
 }
 
 // shortTaskID is a task id cut to the 12 characters the docker CLI shows.

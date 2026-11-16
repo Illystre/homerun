@@ -23,6 +23,7 @@ export class DeployProgress {
 	failedDeploymentId = $state<string | null>(null);
 	#progressSource: EventSource | null = null;
 	#pollGeneration = 0;
+	#followed: string | null = null;
 
 	/**
 	 * Drives the live deploy progress view of one service's overview page.
@@ -59,6 +60,22 @@ export class DeployProgress {
 			this.pendingAction = "deploy";
 			this.watchProgress(latest.id);
 		}
+	}
+
+	/**
+	 * Resumes on `latest` unless it's the deploy already followed, so a page can
+	 * hand over every deploy it learns about (on load, after a form refreshed its
+	 * data, on each poll) and only a new one starts the progress view.
+	 */
+	follow(
+		latest: { id: string; status: string } | undefined,
+		serviceStatus: string,
+	): void {
+		if (!latest || latest.id === this.#followed) {
+			return;
+		}
+		this.#followed = latest.id;
+		this.resume(latest, serviceStatus);
 	}
 
 	/** Closes the live progress stream, if one is open. */
@@ -162,6 +179,7 @@ export class DeployProgress {
 	 * can't be held open (a buffering proxy, a dropped connection mid-deploy).
 	 */
 	watchProgress(deploymentId: string): void {
+		this.#followed = deploymentId;
 		this.#pollGeneration += 1;
 		this.close();
 
