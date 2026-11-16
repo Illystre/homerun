@@ -21,7 +21,7 @@ correctly if you reload the page mid-deploy, or if the deploy was started
 somewhere else entirely (a template quick-deploy, cron, a git push, a settings
 change such as turning on the login wall): the service's page checks for a new
 deploy every few seconds and opens the panel on its own. On a swarm service, the
-log names every new task as it changes state, and a rollout that fails or times
+log names every new task as it changes state, and an update that fails or times
 out ends with the task that explains it: its state and exit code, its
 healthcheck's last answer, and its last output. The Overview tab itself opens on
 four figures for the period picked on its chart (today by default, up to all
