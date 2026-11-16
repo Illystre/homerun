@@ -67,7 +67,7 @@ feature pages under `docs/`.
   `/services/:id/environments/source (build cache and build server)`
 - `deploy-on-push-webhook.webp` —
   `/services/:id/environments/source (deploy on push)`
-- `git-providers.webp` — `/git-providers (Add provider)`
+- `git-providers.webp` — `/git-providers`
 - `previews-tab.webp` — `/services/:id/environments/previews`
 - `previews-open.webp` — `/services/:id/environments/previews (Open previews)`
 - `environments-github-report.webp` —
