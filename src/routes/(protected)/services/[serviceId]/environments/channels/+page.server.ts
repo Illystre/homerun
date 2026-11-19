@@ -5,6 +5,7 @@ import { ServiceDTO } from "#lib/dto/service-dto.js";
 import { StackDTO } from "#lib/dto/stack-dto.js";
 import { canarySlug } from "#lib/release-channels.js";
 import { redirectToSignIn } from "#lib/server/sign-in-redirect.js";
+import { parseEnvOverrides } from "#lib/server/validation/env-overrides.js";
 import { defaultHostname } from "#lib/service-domains.js";
 import { GitWebhookService } from "#lib/services/git-webhook.service.js";
 import {
@@ -45,6 +46,15 @@ export const actions = {
 			gitRepo: svc.gitRepo,
 			gitWebhookId: svc.gitWebhookId,
 		};
+		const parsed = parseEnvOverrides(
+			String(formData.get("channelEnvOverrides") ?? ""),
+		);
+		if ("error" in parsed) {
+			return fail(400, {
+				error: parsed.error,
+				values: Object.fromEntries(formData),
+			});
+		}
 		try {
 			await ReleaseChannelService.configure(
 				svc,
@@ -52,6 +62,8 @@ export const actions = {
 					branch: String(formData.get("channelBranch") ?? ""),
 					canaryDomain: String(formData.get("channelCanaryDomain") ?? ""),
 					enabled: formData.get("channelsEnabled") === "on",
+					envOverrides: parsed.overrides,
+					inheritEnv: formData.get("channelInheritEnv") === "on",
 					tagPattern: String(formData.get("channelTagPattern") ?? ""),
 				},
 				locals.user.id,

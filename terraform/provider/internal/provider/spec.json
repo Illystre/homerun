@@ -783,7 +783,8 @@
 				{
 					"kind": "stringMap",
 					"name": "previewEnvOverrides",
-					"tf": "preview_env_overrides"
+					"tf": "preview_env_overrides",
+					"sensitive": true
 				},
 				{
 					"kind": "bool",
@@ -860,6 +861,18 @@
 					"kind": "string",
 					"name": "channelCanaryDomain",
 					"tf": "channel_canary_domain"
+				},
+				{
+					"kind": "bool",
+					"name": "channelInheritEnv",
+					"tf": "channel_inherit_env",
+					"default": true
+				},
+				{
+					"kind": "stringMap",
+					"name": "channelEnvOverrides",
+					"tf": "channel_env_overrides",
+					"sensitive": true
 				},
 				{
 					"kind": "string",
