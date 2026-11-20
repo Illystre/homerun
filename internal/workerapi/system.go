@@ -8,6 +8,7 @@ import (
 
 	"github.com/zedensix/homerun/internal/dockerapi"
 	"github.com/zedensix/homerun/internal/httpapi"
+	"github.com/zedensix/homerun/internal/pgupgrade"
 )
 
 // mountNetworks wires the network and volume routes.
@@ -20,6 +21,42 @@ func (s *Server) mountNetworks(r chi.Router) {
 	r.Post("/v1/volumes/sizes", httpapi.H(s.volumeSizes))
 	r.Get("/v1/disks", httpapi.H(s.listDisks))
 	r.Post("/v1/volumes/on-disk", httpapi.H(s.volumeOnDisk))
+	r.Post("/v1/volumes/postgres-upgrade", httpapi.H(s.upgradePostgres))
+}
+
+// postgresUpgrade is what upgradePostgres answers: whether the volumes held a
+// cluster to upgrade, every line the upgrade logged, and why it failed.
+type postgresUpgrade struct {
+	Error    string   `json:"error,omitempty"`
+	Log      []string `json:"log"`
+	Upgraded bool     `json:"upgraded"`
+}
+
+// upgradePostgres upgrades the Postgres cluster the request's volumes hold
+// to its image's major (see pgupgrade), for an update trial running on
+// copies of a service's volumes. A failed upgrade still answers 200, with
+// its log and error, so the trial can show what it did.
+func (s *Server) upgradePostgres(w http.ResponseWriter, r *http.Request) error {
+	var request pgupgrade.Request
+	if !httpapi.DecodeJSON(w, r, &request) {
+		return nil
+	}
+	if request.Image == "" {
+		return httpapi.Invalid(w, "Invalid request body",
+			[]httpapi.ValidationIssue{{Message: "image is required", Path: []string{"image"}}})
+	}
+	answer := postgresUpgrade{Log: []string{}}
+	plan, err := pgupgrade.Find(r.Context(), s.docker, request)
+	if err == nil && plan != nil {
+		answer.Upgraded = true
+		err = plan.Run(r.Context(), s.docker, request, func(line string) {
+			answer.Log = append(answer.Log, line)
+		})
+	}
+	if err != nil {
+		answer.Error = err.Error()
+	}
+	return httpapi.Answer(w, http.StatusOK, answer)
 }
 
 // listDisks answers with the host's disk filesystems, measured by the helper

@@ -1,5 +1,5 @@
 import { config } from "#lib/config.js";
-import type { DeploymentDTO } from "#lib/dto/deployment-dto.js";
+import { DeploymentDTO } from "#lib/dto/deployment-dto.js";
 import type { ServiceDTO } from "#lib/dto/service-dto.js";
 import type { StackDTO } from "#lib/dto/stack-dto.js";
 import { RELEASE_ENV } from "#lib/error-tracking/dsn.js";
@@ -373,6 +373,19 @@ function workloadSpec(ctx: WorkerSpecContext, workload: WorkloadPlan) {
 	}
 }
 
+/** The images a service's earlier revisions ran, newest first, which a Postgres major upgrade dumps the old cluster with. */
+export async function previousImages(serviceId: string): Promise<string[]> {
+	const revisions = await DeploymentDTO.listRevisions(serviceId, 20);
+	return [
+		...new Set(
+			revisions.flatMap((dep) => {
+				const ref = dep.toJSON().imageRef;
+				return ref ? [ref] : [];
+			}),
+		),
+	];
+}
+
 /** The release a deploy's error tracking env names up front: a rollback's commit or image, a pulled image's ref. Null for a git build, whose commit the worker fills in. */
 function knownRelease(image: ImagePlan): string | null {
 	switch (image.kind) {
@@ -435,6 +448,7 @@ export async function deployWorkerSpec(
 					]
 				: [],
 		),
+		previousImages: await previousImages(svc.id),
 		readiness: {
 			containerPort: svc.containerPort,
 			disabled: svc.healthcheckDisabled,
@@ -464,7 +478,11 @@ export async function deployWorkerSpec(
 		),
 		serviceId: svc.id,
 		socketPath: config.docker.socketPath,
-		volumes: mounts.map((m) => ({ readOnly: m.mount.toJSON().readOnly })),
+		volumes: mounts.map((m) => ({
+			readOnly: m.mount.toJSON().readOnly,
+			source: m.volumeSource,
+			target: m.mount.toJSON().containerPath,
+		})),
 		workload: workloadSpec(ctx, plan.workload),
 	};
 }

@@ -93,6 +93,34 @@ Every service with an update waiting is listed under **Available updates** on
 the dashboard, with its trial's outcome and an **Update now** button, or **Retry
 trial** when its trial failed.
 
+### Postgres major versions
+
+Postgres only runs a data directory made by its own major version, so moving a
+Postgres service from `18` to `19` by changing the tag alone leaves it down.
+When a deploy's image is Postgres (the official image, or one built on it like
+`pgvector/pgvector` or `postgis/postgis`) and its volume holds a cluster from an
+older major, the deploy upgrades it before starting the new version, whether the
+tag changed through **Update now** or by hand. It stops the service, dumps the
+old cluster with an image of the old major (an earlier revision's, else the same
+image and variant at the old version, `postgres:18-alpine` for
+`postgres:19.0-alpine`), and restores the dump into a fresh cluster at the
+directory the new image reads, in the same volume. The new cluster keeps the old
+one's `pg_hba.conf` and `pg_ident.conf`; `postgresql.conf` and `ALTER SYSTEM`
+settings start from the new image's defaults. The old cluster is kept: beside
+the new one (`/var/lib/postgresql/18/docker` next to
+`/var/lib/postgresql/19/docker`), or, before 18, moved into a
+`homerun-pg<version>-<time>` directory inside the data directory. Delete it once
+the new version runs fine. The service is down for the dump and restore, and the
+volume needs room for the dump and a second copy of the data. If the upgrade
+fails the service starts again on the old version, its data untouched. An update
+trial runs the same upgrade on its volume copies first.
+
+From 18 on the official image keeps its data in
+`/var/lib/postgresql/<major>/docker` and expects the volume at
+`/var/lib/postgresql`. A volume still mounted at `/var/lib/postgresql/data`
+fails the deploy with that advice: change the mount's path to
+`/var/lib/postgresql` and deploy again, the old cluster is upgraded from there.
+
 The same pin, watch and update are on the [REST API and the CLI](api-and-cli.md)
 (`/api/v1/services/:id/version`, `homerun services version`), the
 [MCP server](mcp.md) and [Terraform](infrastructure-as-code.md) (the watch

@@ -11,6 +11,7 @@ import {
 	VOLUME_HELPER_IMAGE,
 	VOLUME_HELPER_TAG,
 } from "./backup/volume-services.ts";
+import { previousImages } from "./deploy/worker-spec.ts";
 import { DockerService } from "./docker.service.ts";
 import {
 	dockerHealthcheck,
@@ -26,11 +27,20 @@ const TRIAL_SETTLE_MS = 20_000;
 const TRIAL_HEALTH_TIMEOUT_MS = 180_000;
 const TRIAL_POLL_MS = 2000;
 const TRIAL_LOG_LINES = 20;
+const POSTGRES_UPGRADE_TIMEOUT_MS = 13 * 60 * 60 * 1000;
 
 /** One of the live service's mounts as a trial container binds it: a fresh copy of a writable volume, the original itself when read-only. */
 interface TrialMount {
 	bind: string;
 	copy: string | null;
+	target: string;
+}
+
+/** What the worker answers once it upgraded, or found nothing to upgrade in, a Postgres cluster. */
+interface PostgresUpgrade {
+	error?: string;
+	log: string[];
+	upgraded: boolean;
 }
 
 /** How a trial container proves it's ready: the `Healthcheck` to create it with (none keeps the image's own), whether to wait for health, and why not. */
@@ -126,6 +136,7 @@ class UpdateTrialServiceClass {
 			.catch(() => undefined);
 		const mounts = await this.#trialMounts(svc, progress);
 		try {
+			await this.#upgradePostgres(svc, { mounts, ref }, progress);
 			await progress(
 				"Starting a throwaway container on the service's networks, with copies of its volumes and no ports or domains",
 			);
@@ -233,13 +244,18 @@ class UpdateTrialServiceClass {
 					mounts.push({
 						bind: `${m.volumeSource}:${containerPath}:ro`,
 						copy: null,
+						target: containerPath,
 					});
 					continue;
 				}
 				const copy = `${trialName(svc)}-${index}`;
 				// oxlint-disable-next-line no-await-in-loop -- one copy at a time, each reported in order
 				await DockerService.removeVolume(copy).catch(() => undefined);
-				mounts.push({ bind: `${copy}:${containerPath}`, copy });
+				mounts.push({
+					bind: `${copy}:${containerPath}`,
+					copy,
+					target: containerPath,
+				});
 				// oxlint-disable-next-line no-await-in-loop -- see above
 				await progress(`Copying ${m.volumeName} for ${containerPath}`);
 				// oxlint-disable-next-line no-await-in-loop -- see above
@@ -262,6 +278,51 @@ class UpdateTrialServiceClass {
 			throw err;
 		}
 		return mounts;
+	}
+
+	/**
+	 * Upgrades the Postgres cluster in the trial's volume copies when the
+	 * update switches Postgres majors, the way the real deploy will (see the
+	 * worker's pgupgrade), dumping it with the live image. Does nothing for
+	 * any other image.
+	 * @throws When the upgrade fails, after logging what it did.
+	 */
+	async #upgradePostgres(
+		svc: ServiceDTO,
+		{ mounts, ref }: Pick<TrialSpec, "mounts" | "ref">,
+		progress: (...lines: string[]) => Promise<void>,
+	): Promise<void> {
+		const volumes = mounts.flatMap((m) =>
+			m.copy ? [{ source: m.copy, target: m.target }] : [],
+		);
+		if (volumes.length === 0) {
+			return;
+		}
+		const result = await DockerService.worker.request<PostgresUpgrade>(
+			"POST",
+			"/v1/volumes/postgres-upgrade",
+			{
+				body: {
+					env: Object.entries(svc.envVars).map(
+						([key, value]) => `${key}=${value}`,
+					),
+					image: ref,
+					previous: [
+						`${svc.image}:${svc.tag}`,
+						...(await previousImages(svc.id)),
+					],
+					volumes,
+				},
+				timeoutMs: POSTGRES_UPGRADE_TIMEOUT_MS,
+			},
+		);
+		if (result.log.length > 0) {
+			await progress(...result.log);
+		}
+		if (result.error) {
+			await progress(result.error);
+			throw new Error(result.error);
+		}
 	}
 
 	/** Removes the volume copies a trial made, ignoring ones already gone. */

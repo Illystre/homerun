@@ -32,6 +32,7 @@ type Spec struct {
 	Image        ImageSpec      `json:"image"`
 	Network      string         `json:"network"`
 	Placements   []VolumeDisk   `json:"placements"`
+	Previous     []string       `json:"previousImages"`
 	Readiness    ReadinessInput `json:"readiness"`
 	ReleaseEnv   string         `json:"releaseEnv"`
 	Route        *RouteSpec     `json:"route"`
@@ -67,9 +68,12 @@ type VolumeDisk struct {
 	Source string `json:"source"`
 }
 
-// Volume is a mounted volume, as far as the rollout strategy cares.
+// Volume is a mounted volume: whether the rollout strategy may share it, and
+// its source and container path, where a Postgres upgrade looks for a cluster.
 type Volume struct {
-	ReadOnly bool `json:"readOnly"`
+	ReadOnly bool   `json:"readOnly"`
+	Source   string `json:"source"`
+	Target   string `json:"target"`
 }
 
 // ImageSpec says where the deploy's image comes from. Kind is "pull",
@@ -282,6 +286,9 @@ func (r *run) deploy(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
+	}
+	if err := r.upgradePostgres(ctx, resolved); err != nil {
+		return err
 	}
 	r.progress.serviceStatus(ctx, "starting")
 

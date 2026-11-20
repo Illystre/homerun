@@ -15,6 +15,7 @@ type ImageInspect struct {
 	Architecture string `json:"Architecture"`
 	Config       struct {
 		ImageConfig
+		Env         []string `json:"Env"`
 		Healthcheck *struct {
 			Test []string `json:"Test"`
 		} `json:"Healthcheck"`
@@ -56,6 +57,7 @@ func (c *Client) InspectImage(ctx context.Context, ref string) (*ImageInspect, e
 	if config := result.Config; config != nil {
 		inspected.Config.Cmd = config.Cmd
 		inspected.Config.Entrypoint = config.Entrypoint
+		inspected.Config.Env = config.Env
 		if config.Healthcheck != nil {
 			inspected.Config.Healthcheck = &struct {
 				Test []string `json:"Test"`
