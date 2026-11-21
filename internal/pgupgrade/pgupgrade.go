@@ -365,6 +365,10 @@ func (w *lineWriter) flush() {
 const probeScript = `find "$1" -maxdepth 3 -name PG_VERSION -type f | while read -r file; do printf '%s\t%s\n' "$(dirname "$file")" "$(head -n 1 "$file")"; done`
 
 const asPostgres = `as_postgres() { if command -v gosu >/dev/null 2>&1; then gosu postgres "$@"; else su-exec postgres "$@"; fi; }
+uid=$(stat -c %u "$OLD")
+gid=$(stat -c %g "$OLD")
+sed -i "s/^postgres:\([^:]*\):[0-9]*:[0-9]*:/postgres:\1:$uid:$gid:/" /etc/passwd
+sed -i "s/^postgres:\([^:]*\):[0-9]*:/postgres:\1:$gid:/" /etc/group
 printf 'local all all trust\n' > /tmp/pg_hba.conf
 chown postgres /tmp/pg_hba.conf
 server_options="-c listen_addresses='' -c unix_socket_directories=/tmp -c hba_file=/tmp/pg_hba.conf"
